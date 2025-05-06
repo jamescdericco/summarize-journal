@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-# TODO Retest journal.org functionality with the new skipping logic
-
 # Summarize journal entries using Ollama
 
 import os
@@ -15,7 +13,6 @@ from typing import TypedDict
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
 DEFAULT_MODEL = "llama3.2" # Default model, can be overridden by args
 DEFAULT_INPUT_FILE = "journal.org"
-DEFAULT_OUTPUT_FILE = "journal-summary.md"
 # Basic prompt for summarization
 DEFAULT_PROMPT_TEMPLATE = "Write a concise, one to three sentence summary of the following journal entry I wrote /no_think:\n\n{entry_text}"
 
@@ -227,7 +224,7 @@ def main():
     parser.add_argument(
         "-o", "--output-md",
         required=True,
-        help=f"Path to the output Markdown summary file (default: {DEFAULT_OUTPUT_FILE})"
+        help=f"Path to the output Markdown summary file"
     )
     parser.add_argument(
         "-m", "--model",
@@ -259,10 +256,14 @@ def main():
     
     # If the output file exists, parse the existing summaries to determine what to skip
     existing_summaries = parse_journal_summary_file(args.output_md)
-    files_already_summarized = {entry['filename'] + '.md' for entry in existing_summaries if entry['filename']}
     
+    # Extract filenames and headings from existing summaries to skip them
+    # for markdown files, we use the filename
+    # for org files, we use the heading
+    files_already_summarized = {entry['filename'] + '.md' for entry in existing_summaries if entry['filename']}
+    headings_already_summarized = {entry['heading'] for entry in existing_summaries if entry['heading']}
 
-    entries: list[JournalEntry] = []
+    entries_to_summarize: list[JournalEntry] = []
 
     # Calculate the set of files not already summarized
     if args.input_entry_md:        
@@ -276,7 +277,7 @@ def main():
                 with open(md_file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                     filename = os.path.splitext(os.path.basename(md_file_path))[0]
-                    entries.append({
+                    entries_to_summarize.append({
                         'heading': None,
                         'filename': filename,
                         'content': content
@@ -290,16 +291,17 @@ def main():
             
     elif args.input_journal_org:
         entries = parse_org_journal(args.input_journal_org)
+        entries_to_summarize = [entry for entry in entries if entry['heading'] not in headings_already_summarized]
 
-    if not entries:
+    if not entries_to_summarize:
         print("No new journal entries found or file could not be read. Exiting.")
         return
 
-    print(f"Found {len(entries)} journal entries to process.")
+    print(f"Found {len(entries_to_summarize)} journal entries to process.")
 
     # Confirm with the user before proceeding
     print(f"\nThe following entries will be processed:")
-    for entry in entries:
+    for entry in entries_to_summarize:
         if entry['filename']:
             print(f"  - {entry['filename']}.md")
         else:
@@ -320,9 +322,9 @@ def main():
         return
 
     processed_count = 0
-    for i, entry in enumerate(entries):
+    for i, entry in enumerate(entries_to_summarize):
         heading = f'[[{entry["filename"]}]]' if entry['filename'] else entry['heading']
-        print(f"\nProcessing entry {i+1}/{len(entries)} (heading: {heading})...")
+        print(f"\nProcessing entry {i+1}/{len(entries_to_summarize)} (heading: {heading})...")
 
         # Basic check for empty content, although parser should handle it
         if not entry['content']:
@@ -338,7 +340,7 @@ def main():
             print(f"  Failed to generate summary for entry (Date: {entry['heading']}). Exiting.")
             return
 
-    print(f"\nSummarization complete. Processed {processed_count}/{len(entries)} entries.")
+    print(f"\nSummarization complete. Processed {processed_count}/{len(entries_to_summarize)} entries.")
     print(f"Summaries appended to: {args.output_md}")
 
 if __name__ == "__main__":
